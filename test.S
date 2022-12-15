@@ -1,4 +1,7 @@
 
+
+
+
 start:
 	LD R1, 0
 empty:
