@@ -47,8 +47,8 @@ static struct ctx {
 } ctx;
 
 void print_tok(tok_t tk);
-
 const char *token_str(enum ttype t);
+
 __attribute__((noreturn))
 void error(const char *error)
 {
@@ -60,18 +60,18 @@ void error(const char *error)
 
 void log_parse_error(tok_t t, const char * fmt, va_list args)
 {
-        fprintf(stderr, ERR_LBL ": line: %i:%i ", t.line+1, t.col+1);
-        vfprintf(stderr, fmt, args);
-        fprintf(stderr, "\n");
+	fprintf(stderr, ERR_LBL ": line: %i:%i ", t.line+1, t.col+1);
+	vfprintf(stderr, fmt, args);
+	fprintf(stderr, "\n");
 }
 __attribute__((noreturn))
 void parse_error(tok_t t, const char * fmt, ...)
 {
-        va_list args;
+	va_list args;
 
-        va_start(args, fmt);
-        log_parse_error(t, fmt, args);
-        error("error while parsing");
+	va_start(args, fmt);
+	log_parse_error(t, fmt, args);
+	error("error while parsing");
 }
 __attribute__((noreturn))
 void tk_error(struct token t, const char * message, const char * parsed, i32_t len)
@@ -85,25 +85,25 @@ void tk_error(struct token t, const char * message, const char * parsed, i32_t l
 
 bool islblbegin(i32_t c)
 {
-        return (isalnum(c) || c == '_') && c != ';';
+	return (isalnum(c) || c == '_') && c != ';';
 }
 
 bool islblchr(i32_t c)
 {
-        return (isalnum(c) || c == '_') && c != ';';
+	return (isalnum(c) || c == '_') && c != ';';
 }
 
 i32_t next()
 {
-        ctx.col++;
-        return getc(ctx.f);
+	ctx.col++;
+	return getc(ctx.f);
 }
 
 /* pushback to buffer */
 void pb(i32_t c)
 {
-        ctx.col--;
-        ungetc(c, ctx.f);
+	ctx.col--;
+	ungetc(c, ctx.f);
 }
 
 
@@ -139,13 +139,13 @@ char * read_ident(const char * pref)
 
 static u32_t hex(char c)
 {
-        if ('0' <= c && c <= '9')
-                return c - '0';
-        if ('a' <= c && c <= 'f')
-                return c - 'a' + 10;
-        if ('A' <= c && c <= 'F')
-                return c - 'A' + 10;
-        error("error reading hexadecimal in literal");
+	if ('0' <= c && c <= '9')
+		return c - '0';
+	if ('a' <= c && c <= 'f')
+		return c - 'a' + 10;
+	if ('A' <= c && c <= 'F')
+		return c - 'A' + 10;
+	error("error reading hexadecimal in literal");
 }
 
 u64_t read_hex()
@@ -328,33 +328,6 @@ lbl_t new_lbl(char *ident, u32_t addr)
 	return res;
 }
 
-void printbits(int n)
-{
-	u32_t i, step;
-
-	if (0 == n) {
-		fputs("0000", stdout);
-		return;
-	}
-
-	i = 1<<(sizeof(n) * 8 - 1);
-
-	step = -1; /* Only print the relevant digits */
-	step >>= 4; /* In groups of 4 */
-	while (step >= n) {
-		i >>= 4;
-		step >>= 4;
-	}
-
-	/* At this point, i is the smallest power of two larger or equal to n */
-	while (i > 0) {
-		if (n & i)
-			putchar('1');
-		else
-			putchar('0');
-		i >>= 1;
-	}
-}
 #define putlbl(lbl) printf("\033[32;1;4mlbl\033[0m: %s:	0x%02X\n",(lbl).str_val, (lbl).addr+1)
 
 void *paste_buffer(void *dst, u32_t *sz, void *buff, u32_t *bz, size_t width)
@@ -460,7 +433,10 @@ u64_t intlit()
 	return tk.int_val;
 }
 u64_t bitor();
-
+/**
+ *	expression evaluator, to evaluate a expression a call to these
+ *	operator evaluetion function whith the lowest precedece, that is: 'bitor()'
+ **/
 u64_t toplevel()
 {
 	tok_t tk;
@@ -479,8 +455,13 @@ u64_t toplevel()
 		return tk.int_val;
 	}
 	else if(tk.type == TK_LBL_REF) {
-		if((i = lbl_idx(tk.str_val)) == -1)
-			parse_error(tk, "use of undeclared identifier: '%s'", tk.str_val);
+		if((i = lbl_idx(tk.str_val)) != -1) {
+			return ctx.lbls[i].addr;
+		} else if(!strcmp(tk.str_val, "THIS")) {
+			free(tk.str_val);
+			return tk.addr;
+		}
+		free(tk.str_val);
 		return ctx.lbls[i].addr;
 	}
 	parse_error(tk, "constant expression expected, found '%s'", token_str(tk.type));
@@ -543,6 +524,7 @@ u64_t shift()
 	ptok();
 	return lhs;
 }
+
 u64_t bitand()
 {
 	u64_t lhs;
@@ -553,6 +535,7 @@ u64_t bitand()
 	ptok();
 	return lhs;
 }
+
 u64_t biteor()
 {
 	u64_t lhs;
@@ -563,6 +546,7 @@ u64_t biteor()
 	ptok();
 	return lhs;
 }
+
 u64_t bitor()
 {
 	u64_t lhs;

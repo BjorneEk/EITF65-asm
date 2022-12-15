@@ -4,7 +4,7 @@ start:
 empty:
 	IN R0
 	AND R0, 1 << 2
-	BZ $_empty
+	BZ $THIS + 3
 	ADD R1, 1
 	JMP $full
 _empty:
