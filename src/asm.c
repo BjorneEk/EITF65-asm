@@ -44,6 +44,9 @@ static struct ctx {
 	tok_t *toks;
 	u32_t tc;
 	i32_t ti;
+	bool padded;
+	u16_t padd_byte;
+	u32_t padded_len;
 } ctx;
 
 void print_tok(tok_t tk);
@@ -210,11 +213,13 @@ tok_t next_tok()
 		case 'B': 	RETIFELS(TK_INS(tk, TK_BZ),	"BZ",	labl);
 		case 'J': 	RETIFELS(TK_INS(tk, TK_JMP),	"JMP",	labl);
 		case 'A': 	RETIFELS(TK_INS(tk, TK_ADD),	"ADD",	and);
-		and:		RETIFELS(TK_INS(tk, TK_AND),	"AND",	labl);
+		and:		RETIFELS(TK_INS(tk, TK_AND),	"ND",	labl);
 		case 'S': 	RETIFELS(TK_INS(tk, TK_SUB),	"SUB",	labl);
 		case 'L': 	RETIFELS(TK_INS(tk, TK_LD),	"LD",	labl);
 		case 'I':	RETIFELS(TK_INS(tk, TK_IN),	"IN",	labl);
 		case 'O':	RETIFELS(TK_INS(tk, TK_OUT),	"OUT",	labl);
+		case 'P':	RETIFELS(TK_INS(tk, TK_PAD),	"PAD",	put);
+		put:		RETIFELS(TK_INS(tk, TK_PUT),	"UT",	labl);
 		case '$':
 			tmp = read_ident(NULL);
 			if(tmp == NULL)
@@ -356,7 +361,7 @@ void *paste_buffer(void *dst, u32_t *sz, void *buff, u32_t *bz, size_t width)
 	void *res;
 
 	res = realloc(dst, (*sz + *bz) * width);
-	memcpy(res, buff, *bz * width);
+	memcpy(res + (*sz * width), buff, *bz * width);
 	*sz += *bz;
 	*bz = 0;
 	return res;
@@ -367,10 +372,10 @@ void tokenize(FILE *f, i32_t verbosity)
 	lbl_t lbuff[100];
 	tok_t tbuff[255];
 	u32_t li, ti, lsz, tsz;
-	tok_t tk;
+	tok_t tk, tk2;
 
-	li = ti = 0;
-	ctx = (struct ctx){.f = f, .line = 0, .col = 0, .addr=-1};
+	li = ti = lsz = tsz = 0;
+	ctx = (struct ctx){.f = f, .line = 0, .col = 0, .addr=-1,.padded=false,.padd_byte=0};
 	do {
 		consume_whitespaces();
 		tk = next_tok();
@@ -384,19 +389,43 @@ void tokenize(FILE *f, i32_t verbosity)
 			lbuff[li++] = new_lbl(tk.str_val, tk.addr+1);
 			if(li >= 100)
 				ctx.lbls = paste_buffer(ctx.lbls, &lsz, &lbuff, &li, sizeof(lbl_t));
+		} else if (tk.type == TK_PAD) {
+			ctx.padded = true;
+			consume_whitespaces();
+			tk = next_tok();
+			consume_whitespaces();
+			tk2 = next_tok();
+			if(tk2.type == ',') {
+				consume_whitespaces();
+				tk2 = next_tok();
+				ctx.padd_byte = tk.int_val;
+				ctx.padded_len = tk2.int_val;
+			} else {
+				ctx.padded_len = tk.int_val;
+				tk = tk2;
+				goto ptok;
+			}
+			if (tk.type != TK_INTLIT) {
+				parse_error(tk, "expected integer literal, found: '%s'",
+				token_str(tk.type));
+			} else if (tk2.type != TK_INTLIT) {
+				parse_error(tk, "expected integer literal, found: '%s'",
+				token_str(tk2.type));
+			}
 		} else {
+		ptok:
 			if(verbosity > 2)
 				print_tok(tk);
 			tbuff[ti++] = tk;
-			if(ti >= 100)
+			if(ti >= 255)
 				ctx.toks = paste_buffer(ctx.toks, &tsz, &tbuff, &ti, sizeof(tok_t));
+
 		}
 	} while(tk.type != TK_END);
-
 	ctx.lbls = paste_buffer(ctx.lbls, &lsz, &lbuff, &li, sizeof(lbl_t));
 	ctx.lc = lsz;
 	ctx.toks = paste_buffer(ctx.toks, &tsz, &tbuff, &ti, sizeof(tok_t));
-	ctx.lc = lsz;
+	ctx.tc = tsz;
 }
 
 
@@ -473,14 +502,15 @@ void expect_comma()
 void free_ctx()
 {
 	u32_t i;
-
-	for(i = 0; i < ctx.tc; i++)
-		if(ctx.toks[i].type == TK_LBL_REF)
-			free(ctx.toks[i].str_val);
 	for(i = 0; i < ctx.lc; i++)
 		free(ctx.lbls[i].ident);
 	free(ctx.toks);
 	free(ctx.lbls);
+}
+
+i32_t peak()
+{
+	return ctx.toks[ctx.ti].type;
 }
 
 #define putins(in) printf("\e[1m|\e[m[\033[31;1;4m%s\033[0m]	\
@@ -494,8 +524,9 @@ void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 	FILE *in;
 	ins_t instr;
 	tok_t tk;
-	u32_t i;
-
+	u32_t i, pc;
+	u16_t pv;
+	u32_t cnt = 0;
 	in = fopen(src, "r");
 	if (!in) {
 		fprintf(stderr, ERR_LBL ": could not open file: '%s' for reading\n", src);
@@ -503,7 +534,6 @@ void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 	}
 
 	tokenize(in, verbosity);
-
 	out = fopen(dst, "w");
 	if (!out) {
 		fprintf(stderr, ERR_LBL ": could not open file: '%s' for writing\n", dst);
@@ -514,8 +544,31 @@ void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 	ctx.ti = 0;
 	do {
 		tk = ntok();
+
 		if(!is_instr(tk)) {
-			if(tk.type != TK_END)
+			if (tk.type == TK_PUT) {
+				pv = pc = expect_int();
+				if(peak() == ',') {
+					expect_comma();
+					pc = expect_int();
+				} else {
+					pv = 0;
+				}
+				for(i = 0; i < pc; i++) {
+					switch(fmt) {
+						case FMT_BIN:
+							fputc(pv >> 8, out);
+							fputc(pv & 0xFF, out);
+							break;
+						case FMT_HEX:
+							fprintf(out, "%02X%02X;\n",
+								pv >> 8, pv & 0xFF);
+							break;
+					}
+					cnt++;
+				}
+			}
+			else if(tk.type != TK_END)
 				parse_error(tk, "expected instruction keyword, found '%s'",
 					token_str(tk.type));
 			continue;
@@ -553,9 +606,24 @@ void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 					(instr.INS << 1) | instr.DST, instr.DATA);
 				break;
 		}
+		cnt++;
 		if (verbosity)
 			putins(instr);
 	} while(tk.type != TK_END);
+
+	while(cnt < ctx.padded_len) {
+		switch(fmt) {
+			case FMT_BIN:
+				fputc(ctx.padd_byte >> 8, out);
+				fputc(ctx.padd_byte & 0xFF, out);
+				break;
+			case FMT_HEX:
+				fprintf(out, "%02X%02X;\n",
+					ctx.padd_byte >> 8, ctx.padd_byte & 0xFF);
+				break;
+		}
+		cnt++;
+	}
 	free_ctx();
 }
 void print_tok(tok_t t)

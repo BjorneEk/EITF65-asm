@@ -1,5 +1,5 @@
 
-TARGET=EIT65-asm
+TARGET=EITF65-asm
 
 CC=gcc
 
@@ -7,7 +7,7 @@ CC=gcc
 INCLUDE_DIR:=src
 CFLAGS=-I$(INCLUDE_DIR) -F /Library/Frameworks
 LIBS:=-framework UL
-
+BIN:=~/Bin
 C_SOURCES:=$(wildcard src/*.c *.c )
 DEPS:=$(wildcard $(INCLUDE_DIR)/*.h *.h)
 
@@ -22,8 +22,10 @@ $(TARGET): $(OBJ)
 run: $(TARGET)
 	./$(TARGET)
 
-
+install: $(TARGET)
+	cp $(TARGET) $(BIN)
 clean:
 	$(RM) src/*.bin src/*.o src/*.dis src/*.elf
 	$(RM) lib/*.o
 	$(RM) $(OBJ)
+	$(RM) $(TARGET)

@@ -68,6 +68,8 @@ enum {
 	X(INTLIT)	\
 	X(REG_R0)	\
 	X(REG_R1)	\
+	X(PAD)		\
+	X(PUT)		\
 	X(END)
 
 
@@ -88,6 +90,8 @@ enum ttype {
 	TK_INTLIT,
 	TK_REG_R0,
 	TK_REG_R1,
+	TK_PAD,
+	TK_PUT,
 	TK_END
 };
 #undef TTYPE_NAME
