@@ -27,21 +27,11 @@ void usage(const char *prog)
 	printf("Example: \n");
 	printf("	%s main.S -o myprogram.bin\n", prog);
 }
-void generate_binary(const char * src, const char * dst, i32_t verbosity, bool hex)
+void generate_binary(const char * src, const char * dst, i32_t verbosity, i32_t hex)
 {
-	FILE *f;
-	lbl_t *lbls;
-	u32_t i, lbl_cnt;
-	//f = fopen(src, "r");
 	if(verbosity > 0)
 		putchar('\n');
-	/*lbls = get_labels(f, &lbl_cnt, verbosity > 1);
-	if(verbosity > 1)
-		putchar('\n');
-	rewind(f);
-	assemble(f, lbls, lbl_cnt, dst, !!verbosity, hex);
-	free(lbls);*/
-	_assemble(src, dst, hex, verbosity);
+	assemble(src, dst, hex, verbosity);
 }
 
 i32_t main(i32_t argc, char *argv[])
@@ -49,7 +39,8 @@ i32_t main(i32_t argc, char *argv[])
 	i32_t opt, verbosity = 0;
 	char *input = NULL;
 	char *output = "out.bin";
-	bool hex = true;
+	i32_t fmt = FMT_HEX;
+
 	if(argc < 2){
 		fprintf(stderr, "no input file specified, try -h for help");
 		exit(-1);
@@ -73,12 +64,12 @@ i32_t main(i32_t argc, char *argv[])
 					!strcmp(optarg, "X")   ||
 					!strcmp(optarg, "hex") ||
 					!strcmp(optarg, "HEX"))
-					hex = true;
+					fmt = FMT_HEX;
 				else if(!strcmp(optarg, "b")   ||
 					!strcmp(optarg, "B")   ||
 					!strcmp(optarg, "bin") ||
 					!strcmp(optarg, "BIN"))
-					hex = false;
+					fmt = FMT_BIN;
 				break;
 			case ':':
 				fprintf(stderr, "option %c needs a value\n", opt);
@@ -89,9 +80,6 @@ i32_t main(i32_t argc, char *argv[])
 		}
 	}
 
-	if(verbosity > 1)
-		printf("verbosity: %i\ninput: %s\noutput: %s\n",verbosity,input,output);
-
-	generate_binary(input, output, verbosity, hex);
+	generate_binary(input, output, verbosity, fmt);
 	return 0;
 }
