@@ -5,8 +5,8 @@ CC=gcc
 
 
 INCLUDE_DIR:=src
-CFLAGS=-I$(INCLUDE_DIR) -F /Library/Frameworks
-LIBS:=-framework UL
+CFLAGS=-I$(INCLUDE_DIR)
+LIBS:=
 BIN:=~/Bin
 C_SOURCES:=$(wildcard src/*.c *.c )
 DEPS:=$(wildcard $(INCLUDE_DIR)/*.h *.h)

@@ -44,9 +44,6 @@ static struct ctx {
 	tok_t *toks;
 	u32_t tc;
 	i32_t ti;
-	bool padded;
-	u16_t padd_byte;
-	u32_t padded_len;
 } ctx;
 
 void print_tok(tok_t tk);
@@ -76,7 +73,7 @@ void parse_error(tok_t t, const char * fmt, ...)
         log_parse_error(t, fmt, args);
         error("error while parsing");
 }
-
+__attribute__((noreturn))
 void tk_error(struct token t, const char * message, const char * parsed, i32_t len)
 {
 	char buff[len+1];
@@ -206,7 +203,8 @@ tok_t next_tok()
 	tk = NEW_TK();
 
 	buff[i = 0] = next();
-
+	if (strchr("/*+-%|&~^(),", buff[i]))
+		return TK_INS(tk, buff[i]);
 	switch(buff[i]) {
 		case 'C': 	RETIFELS(TK_INS(tk, TK_CALL),	"CALL",	labl);
 		case 'R': 	RETIFELS(TK_INS(tk, TK_RET),	"RET",	labl);
@@ -218,6 +216,8 @@ tok_t next_tok()
 		case 'L': 	RETIFELS(TK_INS(tk, TK_LD),	"LD",	labl);
 		case 'I':	RETIFELS(TK_INS(tk, TK_IN),	"IN",	labl);
 		case 'O':	RETIFELS(TK_INS(tk, TK_OUT),	"OUT",	labl);
+		case '<':	RETIFELS(TK_INS(tk, TK_LSH),	"<<",	err);
+		case '>':	RETIFELS(TK_INS(tk, TK_RSH),	">>",	err);
 		case 'P':	RETIFELS(TK_INS(tk, TK_PAD),	"PAD",	put);
 		put:		RETIFELS(TK_INS(tk, TK_PUT),	"UT",	labl);
 		case '$':
@@ -257,6 +257,8 @@ tok_t next_tok()
 				tk_error(tk, "expected ':' after label", buff, i+1);
 			return TK_IDENT(tk, tmp);
 	}
+	err:
+		tk_error(tk, "unexpected token", buff, i+1);
 }
 
 bool is_spce(i32_t c)
@@ -268,8 +270,7 @@ bool is_wsc(i32_t c)
         return c == ' '
                 || c == '\t'
                 || c == '\r'
-                || c == '\f'
-                || c == '\n';
+                || c == '\f';
 }
 
 bool consume_wsc()
@@ -373,9 +374,8 @@ void tokenize(FILE *f, i32_t verbosity)
 	tok_t tbuff[255];
 	u32_t li, ti, lsz, tsz;
 	tok_t tk, tk2;
-
 	li = ti = lsz = tsz = 0;
-	ctx = (struct ctx){.f = f, .line = 0, .col = 0, .addr=-1,.padded=false,.padd_byte=0};
+	ctx = (struct ctx){.f = f, .line = 0, .col = 0, .addr=-1};
 	do {
 		consume_whitespaces();
 		tk = next_tok();
@@ -389,29 +389,6 @@ void tokenize(FILE *f, i32_t verbosity)
 			lbuff[li++] = new_lbl(tk.str_val, tk.addr+1);
 			if(li >= 100)
 				ctx.lbls = paste_buffer(ctx.lbls, &lsz, &lbuff, &li, sizeof(lbl_t));
-		} else if (tk.type == TK_PAD) {
-			ctx.padded = true;
-			consume_whitespaces();
-			tk = next_tok();
-			consume_whitespaces();
-			tk2 = next_tok();
-			if(tk2.type == ',') {
-				consume_whitespaces();
-				tk2 = next_tok();
-				ctx.padd_byte = tk.int_val;
-				ctx.padded_len = tk2.int_val;
-			} else {
-				ctx.padded_len = tk.int_val;
-				tk = tk2;
-				goto ptok;
-			}
-			if (tk.type != TK_INTLIT) {
-				parse_error(tk, "expected integer literal, found: '%s'",
-				token_str(tk.type));
-			} else if (tk2.type != TK_INTLIT) {
-				parse_error(tk, "expected integer literal, found: '%s'",
-				token_str(tk2.type));
-			}
 		} else {
 		ptok:
 			if(verbosity > 2)
@@ -426,6 +403,7 @@ void tokenize(FILE *f, i32_t verbosity)
 	ctx.lc = lsz;
 	ctx.toks = paste_buffer(ctx.toks, &tsz, &tbuff, &ti, sizeof(tok_t));
 	ctx.tc = tsz;
+	fclose(f);
 }
 
 
@@ -433,7 +411,18 @@ tok_t ntok()
 {
 	return ctx.toks[ctx.ti++];
 }
+void ptok()
+{
+	--ctx.ti;
+}
 
+bool consume(i32_t type)
+{
+	bool res = ctx.toks[ctx.ti].type == type;
+	if(res)
+		ctx.ti++;
+	return res;
+}
 i32_t lbl_idx(const char *id)
 {
 	i32_t i;
@@ -443,7 +432,6 @@ i32_t lbl_idx(const char *id)
 			return i;
 	return -1;
 }
-
 u32_t expect_addr()
 {
 	tok_t tk;
@@ -462,16 +450,133 @@ u32_t expect_addr()
 	return ctx.lbls[i].addr;
 }
 
-u32_t expect_int()
+
+u64_t intlit()
 {
 	tok_t tk;
 	tk = ntok();
-	if(tk.type != TK_INTLIT) {
-		parse_error(tk, "expected integer literal, found: '%s'",
-		token_str(tk.type));
-	}
+	if(tk.type != TK_INTLIT)
+		parse_error(tk, "expected integer literal, found: '%s'",token_str(tk.type));
 	return tk.int_val;
+}
+u64_t bitor();
 
+u64_t toplevel()
+{
+	tok_t tk;
+	u64_t res;
+	i32_t i;
+	tk = ntok();
+
+	if(tk.type == '(') {
+		res = bitor();
+		tk = ntok();
+		if(tk.type != ')')
+			parse_error(tk, "expected ')', found '%s'", token_str(tk.type));
+		return res;
+	}
+	else if(tk.type == TK_INTLIT) {
+		return tk.int_val;
+	}
+	else if(tk.type == TK_LBL_REF) {
+		if((i = lbl_idx(tk.str_val)) == -1)
+			parse_error(tk, "use of undeclared identifier: '%s'", tk.str_val);
+		return ctx.lbls[i].addr;
+	}
+	parse_error(tk, "constant expression expected, found '%s'", token_str(tk.type));
+}
+
+u64_t unary()
+{
+	u32_t op;
+	op = ntok().type;
+	if (op == '~')
+		return ~unary();
+	else if (op == '-')
+		return -unary();
+	ptok();
+	return toplevel();
+}
+u64_t muldiv()
+{
+	u64_t lhs;
+	u32_t op;
+	lhs = unary();
+	while((op = ntok().type) == '*' || op == '/' || op == '%') {
+		if(op == '*')
+			lhs *= unary();
+		else if(op == '/')
+			lhs /= unary();
+		else
+			lhs %= unary();
+	}
+	ptok();
+	return lhs;
+}
+
+u64_t addsub()
+{
+	u64_t lhs;
+	u32_t op;
+	lhs = muldiv();
+	while((op = ntok().type) == '+' || op == '-') {
+		if(op == '+')
+			lhs += muldiv();
+		else
+			lhs -= muldiv();
+	}
+	ptok();
+	return lhs;
+}
+
+u64_t shift()
+{
+	u64_t lhs;
+	u32_t op;
+	lhs = addsub();
+	while((op = ntok().type) == TK_LSH || op == TK_RSH) {
+		if(op == TK_LSH)
+			lhs <<= addsub();
+		else
+			lhs >>= addsub();
+	}
+	ptok();
+	return lhs;
+}
+u64_t bitand()
+{
+	u64_t lhs;
+	u32_t op;
+	lhs = shift();
+	while((op = ntok().type) == '&')
+		lhs &= shift();
+	ptok();
+	return lhs;
+}
+u64_t biteor()
+{
+	u64_t lhs;
+	u32_t op;
+	lhs = bitand();
+	while((op = ntok().type) == '^')
+		lhs ^= bitand();
+	ptok();
+	return lhs;
+}
+u64_t bitor()
+{
+	u64_t lhs;
+	u32_t op;
+	lhs = biteor();
+	while((op = ntok().type) == '|')
+		lhs |= biteor();
+	ptok();
+	return lhs;
+}
+
+u32_t expect_expr()
+{
+	return bitor();
 }
 
 u32_t expect_register()
@@ -517,7 +622,19 @@ i32_t peak()
 \e[1m|\e[m%i	\e[1m|\e[m% 3i	\e[1m|\e[m%02X%02X	\
 \e[1m|\e[m0x%02X\e[1m|\e[m\n",token_str(in.tok.type), \
 in.DST, in.DATA,(in.INS << 1) | in.DST, in.DATA, in.tok.addr);
-
+void putinstr(FILE *out, u8_t hb, u8_t lb, i32_t fmt)
+{
+	switch(fmt) {
+		case FMT_BIN:
+			fputc(hb, out);
+			fputc(lb, out);
+			break;
+		case FMT_HEX:
+			fprintf(out, "%02X%02X;\n",
+				hb, lb & 0xFF);
+			break;
+	}
+}
 void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 {
 	FILE *out;
@@ -527,6 +644,9 @@ void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 	u32_t i, pc;
 	u16_t pv;
 	u32_t cnt = 0;
+
+	u32_t padd_len = 0;
+	u16_t padd_word = 0;
 	in = fopen(src, "r");
 	if (!in) {
 		fprintf(stderr, ERR_LBL ": could not open file: '%s' for reading\n", src);
@@ -547,25 +667,24 @@ void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 
 		if(!is_instr(tk)) {
 			if (tk.type == TK_PUT) {
-				pv = pc = expect_int();
+				pv = pc = expect_expr();
 				if(peak() == ',') {
 					expect_comma();
-					pc = expect_int();
+					pc = expect_expr();
 				} else {
 					pv = 0;
 				}
 				for(i = 0; i < pc; i++) {
-					switch(fmt) {
-						case FMT_BIN:
-							fputc(pv >> 8, out);
-							fputc(pv & 0xFF, out);
-							break;
-						case FMT_HEX:
-							fprintf(out, "%02X%02X;\n",
-								pv >> 8, pv & 0xFF);
-							break;
-					}
+					putinstr(out, pv >> 8, pv & 0xFF, fmt);
 					cnt++;
+				}
+			} else if(tk.type == TK_PAD) {
+				padd_len = padd_word = expect_expr();
+				if(peak() == ',') {
+					expect_comma();
+					padd_len = expect_expr();
+				} else {
+					padd_word = 0;
 				}
 			}
 			else if(tk.type != TK_END)
@@ -580,7 +699,7 @@ void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 			case TK_CALL:
 			case TK_BZ:
 			case TK_JMP:
-				instr.DATA = expect_addr();
+				instr.DATA = expect_expr();
 				instr.DST = 0;
 				break;
 			case TK_RET: break;
@@ -590,42 +709,26 @@ void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 			case TK_LD:
 				instr.DST = expect_register();
 				expect_comma();
-				instr.DATA = expect_int();
+				instr.DATA = expect_expr();
 				break;
 			case TK_IN:
 			case TK_OUT:
 				instr.DST = expect_register();
+
 		}
-		switch(fmt) {
-			case FMT_BIN:
-				fputc((instr.INS << 1) | instr.DST, out);
-				fputc(instr.DATA, out);
-				break;
-			case FMT_HEX:
-				fprintf(out, "%02X%02X;\n",
-					(instr.INS << 1) | instr.DST, instr.DATA);
-				break;
-		}
+		putinstr(out, (instr.INS << 1) | instr.DST, instr.DATA, fmt);
 		cnt++;
 		if (verbosity)
 			putins(instr);
 	} while(tk.type != TK_END);
 
-	while(cnt < ctx.padded_len) {
-		switch(fmt) {
-			case FMT_BIN:
-				fputc(ctx.padd_byte >> 8, out);
-				fputc(ctx.padd_byte & 0xFF, out);
-				break;
-			case FMT_HEX:
-				fprintf(out, "%02X%02X;\n",
-					ctx.padd_byte >> 8, ctx.padd_byte & 0xFF);
-				break;
-		}
+	while(cnt < padd_len) {
+		putinstr(out, padd_word >> 8, padd_word & 0xFF, fmt);
 		cnt++;
 	}
 	free_ctx();
 }
+
 void print_tok(tok_t t)
 {
 	switch(t.type) {

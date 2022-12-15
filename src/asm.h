@@ -70,6 +70,8 @@ enum {
 	X(REG_R1)	\
 	X(PAD)		\
 	X(PUT)		\
+	X(RSH)		\
+	X(LSH)		\
 	X(END)
 
 
@@ -85,13 +87,15 @@ enum ttype {
 	TK_IN   = IN,
 	TK_OUT  = OUT,
 	TK_AND  = AND,
-	TK_LBL =0b10000,
+	TK_LBL  = 0b10000,
 	TK_LBL_REF,
 	TK_INTLIT,
 	TK_REG_R0,
 	TK_REG_R1,
 	TK_PAD,
 	TK_PUT,
+	TK_LSH,
+	TK_RSH,
 	TK_END
 };
 #undef TTYPE_NAME
