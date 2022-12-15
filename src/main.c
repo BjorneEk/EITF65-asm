@@ -32,15 +32,16 @@ void generate_binary(const char * src, const char * dst, i32_t verbosity, bool h
 	FILE *f;
 	lbl_t *lbls;
 	u32_t i, lbl_cnt;
-	f = fopen(src, "r");
+	//f = fopen(src, "r");
 	if(verbosity > 0)
 		putchar('\n');
-	lbls = get_labels(f, &lbl_cnt, verbosity > 1);
+	/*lbls = get_labels(f, &lbl_cnt, verbosity > 1);
 	if(verbosity > 1)
 		putchar('\n');
 	rewind(f);
 	assemble(f, lbls, lbl_cnt, dst, !!verbosity, hex);
-	free(lbls);
+	free(lbls);*/
+	_assemble(src, dst, hex, verbosity);
 }
 
 i32_t main(i32_t argc, char *argv[])

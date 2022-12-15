@@ -39,8 +39,14 @@ static struct ctx {
 	i32_t line;
 	i32_t col;
 	u32_t addr;
+	lbl_t *lbls;
+	u32_t lc;
+	tok_t *toks;
+	u32_t tc;
+	i32_t ti;
 } ctx;
 
+void print_tok(tok_t tk);
 
 const char *token_str(enum ttype t);
 __attribute__((noreturn))
@@ -367,6 +373,7 @@ u32_t expect_addr(lbl_t *lbls, u32_t cnt)
 	free(tk.str_val);
 	return lbls[i].addr;
 }
+
 u32_t expect_int()
 {
 	tok_t tk;
@@ -468,6 +475,205 @@ lbl_t *get_labels(FILE *f, u32_t *lbl_cnt, bool debug)
 	return res;
 }
 
+#define putlbl(lbl) printf("lbl: %s:0x%x\n",(lbl).str_val, (lbl).addr+1)
+
+void *paste_buffer(void *dst, u32_t *sz, void *buff, u32_t *bz, size_t width)
+{
+	void *res;
+
+	res = realloc(dst, (*sz + *bz) * width);
+	memcpy(res, buff, *bz * width);
+	*sz += *bz;
+	*bz = 0;
+	return res;
+}
+
+void tokenize(FILE *f, i32_t verbosity)
+{
+	lbl_t lbuff[100];
+	tok_t tbuff[255];
+	u32_t li, ti, lsz, tsz;
+	tok_t tk;
+
+	li = ti = 0;
+	ctx = (struct ctx){.f = f, .line = 0, .col = 0, .addr=-1};
+	do {
+		consume_whitespaces();
+		tk = next_tok();
+		if(is_instr(tk))
+			ctx.addr++;
+		tk.addr = ctx.addr;
+
+		if(tk.type == TK_LBL) {
+			if(verbosity > 1)
+				putlbl(tk);
+			lbuff[li++] = new_lbl(tk.str_val, tk.addr+1);
+			if(li >= 100)
+				ctx.lbls = paste_buffer(ctx.lbls, &lsz, &lbuff, &li, sizeof(lbl_t));
+		} else {
+			if(verbosity > 2)
+				print_tok(tk);
+			tbuff[ti++] = tk;
+			if(ti >= 100)
+				ctx.toks = paste_buffer(ctx.toks, &tsz, &tbuff, &ti, sizeof(tok_t));
+		}
+	} while(tk.type != TK_END);
+
+	ctx.lbls = paste_buffer(ctx.lbls, &lsz, &lbuff, &li, sizeof(lbl_t));
+	ctx.lc = lsz;
+	ctx.toks = paste_buffer(ctx.toks, &tsz, &tbuff, &ti, sizeof(tok_t));
+	ctx.lc = lsz;
+}
+
+
+tok_t nxttok()
+{
+	return ctx.toks[ctx.ti++];
+}
+i32_t _lbl_idx(const char *id)
+{
+	i32_t i;
+
+	for(i = 0; i < ctx.lc; i++)
+		if(!strcmp(ctx.lbls[i].ident,id))
+			return i;
+	return -1;
+}
+u32_t _expect_addr()
+{
+	tok_t tk;
+	u32_t i;
+	lbl_t res;
+	tk = nxttok();
+	if(tk.type != TK_LBL_REF && tk.type != TK_INTLIT) {
+		parse_error(tk, "expected label reference or literal address, found: '%s'",
+		token_str(tk.type));
+	}
+	if(tk.type == TK_INTLIT)
+		return tk.int_val;
+	else if ((i = _lbl_idx(tk.str_val)) == -1)
+		parse_error(tk, "use of undeclared identifier: '%s'", tk.str_val);
+	free(tk.str_val);
+	return ctx.lbls[i].addr;
+}
+u32_t _expect_int()
+{
+	tok_t tk;
+	tk = nxttok();
+	if(tk.type != TK_INTLIT) {
+		parse_error(tk, "expected integer literal, found: '%s'",
+		token_str(tk.type));
+	}
+	return tk.int_val;
+
+}
+u32_t _expect_register()
+{
+	tok_t tk;
+
+	tk = nxttok();
+	if (tk.type != TK_REG_R0 && tk.type != TK_REG_R1)
+		parse_error(tk, "expected register R0 or R1, found: '%s'",
+		token_str(tk.type));
+	else if(tk.type == TK_REG_R0)
+		return REG_R0;
+	else
+		return REG_R1;
+}
+
+void _expect_comma()
+{
+	tok_t tk;
+
+	tk = nxttok();
+	if (tk.type != ',')
+		parse_error(tk, "expected comma, found: '%s'",
+		token_str(tk.type));
+	return;
+}
+
+void free_ctx()
+{
+	u32_t i;
+
+	for(i = 0; i < ctx.tc; i++)
+		if(ctx.toks[i].type == TK_LBL_REF)
+			free(ctx.toks[i].str_val);
+	for(i = 0; i < ctx.lc; i++)
+		free(ctx.lbls[i].ident);
+	free(ctx.toks);
+	free(ctx.lbls);
+}
+void _assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
+{
+	FILE *out;
+	FILE *in;
+	ins_t instr;
+	tok_t tk;
+	u32_t i;
+
+	in = fopen(src, "r");
+	if (!in) {
+		fprintf(stderr, ERR_LBL ": could not open file: '%s' for reading\n", src);
+		exit(-1);
+	}
+
+	tokenize(in, verbosity);
+
+	out = fopen(dst, "w");
+	if (!out) {
+		fprintf(stderr, ERR_LBL ": could not open file: '%s' for writing\n", dst);
+		exit(-1);
+	}
+
+	ctx.ti = 0;
+	do {
+		tk = nxttok();
+		if(!is_instr(tk))
+			continue;
+
+		instr.INS = tk.type;
+		instr.tok = tk;
+		switch(tk.type) {
+			case TK_CALL:
+			case TK_BZ:
+			case TK_JMP:
+				instr.DATA = _expect_addr();
+				instr.DST = 0;
+				break;
+			case TK_RET: break;
+			case TK_SUB:
+			case TK_ADD:
+			case TK_AND:
+			case TK_LD:
+				instr.DST = _expect_register();
+				_expect_comma();
+				instr.DATA = _expect_int();
+				break;
+			case TK_IN:
+			case TK_OUT:
+				instr.DST = _expect_register();
+			default:
+				printf("ERROR\n");
+				break;
+		}
+		switch(fmt) {
+			case FMT_BIN:
+				fputc((instr.INS << 1) | instr.DST, out);
+				fputc(instr.DATA, out);
+				break;
+			case FMT_HEX:
+				fprintf(out, "%02X%02X;\n",
+					(instr.INS << 1) | instr.DST, instr.DATA);
+				break;
+		}
+		if (verbosity)
+			printf("%s: DST: %i, DATA: %i\n",
+			token_str(instr.tok.type), instr.DST, instr.DATA);
+	} while(tk.type != TK_END);
+	free_ctx();
+}
+
 void assemble(FILE *f, lbl_t *lbls, u32_t lbl_cnt, const char *dst, bool debug, bool hex)
 {
 	FILE *out;
@@ -492,8 +698,6 @@ void assemble(FILE *f, lbl_t *lbls, u32_t lbl_cnt, const char *dst, bool debug, 
 
 		ctx.addr++;
 		tk.addr = ctx.addr;
-		//print_tok(tk);
-
 		instr.INS = tk.type;
 		instr.tok = tk;
 		switch(tk.type) {
@@ -540,6 +744,7 @@ void assemble(FILE *f, lbl_t *lbls, u32_t lbl_cnt, const char *dst, bool debug, 
 	for(i = 0; i < lbl_cnt; i++)
 		free(lbls[i].ident);
 }
+
 
 void print_tok(tok_t t)
 {

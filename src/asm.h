@@ -124,7 +124,14 @@ typedef struct ins {
 	tok_t tok;
 } ins_t;
 
+enum {
+	FMT_BIN = 0,
+	FMT_HEX = 1
+};
+
 lbl_t *get_labels(FILE *f, u32_t *lbl_cnt, bool debug);
+void tokenize(FILE *f, i32_t verbosity);
 void assemble(FILE *f, lbl_t *lbls, u32_t lbl_cnt, const char *dst, bool debug, bool hex);
+void _assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity);
 
 #endif /* _EIT65_ASM_H_ */
