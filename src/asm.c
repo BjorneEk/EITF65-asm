@@ -482,6 +482,12 @@ void free_ctx()
 	free(ctx.toks);
 	free(ctx.lbls);
 }
+
+#define putins(in) printf("\e[1m|\e[m[\033[31;1;4m%s\033[0m]	\
+\e[1m|\e[m%i	\e[1m|\e[m% 3i	\e[1m|\e[m%02X%02X	\
+\e[1m|\e[m0x%02X\e[1m|\e[m\n",token_str(in.tok.type), \
+in.DST, in.DATA,(in.INS << 1) | in.DST, in.DATA, in.tok.addr);
+
 void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 {
 	FILE *out;
@@ -548,9 +554,7 @@ void assemble(const char *src, const char *dst, i32_t fmt, i32_t verbosity)
 				break;
 		}
 		if (verbosity)
-			printf("|[\033[31;1;4m%s\033[0m]	|%i	|% 3i	|%02X%02X	|0x%02X|\n",
-			token_str(instr.tok.type), instr.DST, instr.DATA,
-			(instr.INS << 1) | instr.DST, instr.DATA, instr.tok.addr);
+			putins(instr);
 	} while(tk.type != TK_END);
 	free_ctx();
 }
